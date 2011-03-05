@@ -7,9 +7,16 @@ import java.util.Map;
 
 public class KeyStroke {
 
-	private static Map<Character, Integer> keyCodeMap;
-	private static Map<Character, Character> charMap;
-	static {
+	private Robot robot;
+
+	private Map<Character, Integer> keyCodeMap;
+	private Map<Character, Character> charMap;
+
+	public KeyStroke(Robot robot) {
+		if (robot == null)
+			throw new IllegalArgumentException("robot must not be null");
+		this.robot = robot;
+
 		keyCodeMap = new CharacterMap();
 		keyCodeMap.put('0', KeyEvent.VK_0);
 		keyCodeMap.put('1', KeyEvent.VK_1);
@@ -111,49 +118,55 @@ public class KeyStroke {
 		charMap.put('?', '/');
 	}
 
-	public static void typeString(Robot robot, char... value) {
-		typeString(robot, new String(value));
+	public void typeString(char... value) {
+		typeString(new String(value));
 	}
 
-	public static void typeString(Robot robot, String s) {
+	public void typeString(String s) {
 		for (char ch : s.toCharArray())
-			typeCharacter(robot, ch);
+			typeCharacter(ch);
 	}
 
-	public static boolean typeCharacter(Robot robot, char ch) {
-		if (doType(robot, ch))
-			return true;
-
-		if (charMap.containsKey(ch)) {
+	public void typeCharacter(char ch) {
+		boolean isShiftKey = charMap.containsKey(ch);
+		if (isShiftKey) {
 			ch = charMap.get(ch);
-
 			robot.keyPress(KeyEvent.VK_SHIFT);
-			if (doType(robot, ch))
-				return true;
-			robot.keyRelease(KeyEvent.VK_SHIFT);
 		}
-
-		return false;
+		
+		if (keyCodeMap.containsKey(ch)) {
+			try {
+				doType(ch);
+				return;
+			} catch (IllegalArgumentException e) {
+				handleException(e, ch);
+			}
+		}
+		
+		if (isShiftKey)
+			robot.keyRelease(KeyEvent.VK_SHIFT);
 	}
 
-	private static boolean doType(Robot robot, char ch) {
-		if (keyCodeMap.containsKey(ch)) {
-			if (Character.isUpperCase(ch))
-				robot.keyPress(KeyEvent.VK_SHIFT);
-			
-			int keyCode = keyCodeMap.get(ch);
-			try {
-				robot.keyPress(keyCode);
-				robot.keyRelease(keyCode);
-				return true;
-			} catch (RuntimeException e) {
-				e.printStackTrace();
-			}
-			
+	private void doType(char ch) {
+		if (!keyCodeMap.containsKey(ch))
+			return;
+
+		if (Character.isUpperCase(ch))
+			robot.keyPress(KeyEvent.VK_SHIFT);
+		int keyCode = keyCodeMap.get(ch);
+		try {
+			robot.keyPress(keyCode);
+			robot.keyRelease(keyCode);
+		} finally {
 			if (Character.isUpperCase(ch))
 				robot.keyRelease(KeyEvent.VK_SHIFT);
 		}
-		return false;
+	}
+
+	private static void handleException(IllegalArgumentException e, char ch) {
+		String message = e.getMessage();
+		if ("Invalid key code".equals(message))
+			System.err.printf("invalid key code '%s'\n", Integer.toString(ch));
 	}
 
 }

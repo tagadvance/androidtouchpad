@@ -12,10 +12,9 @@ import org.teleal.cling.binding.annotations.UpnpStateVariable;
 
 import com.tag.network.UDPServer;
 
-
 @UpnpService(serviceId = @UpnpServiceId("Touchpad"), serviceType = @UpnpServiceType(value = "Touchpad", version = 1))
 public class TouchpadService {
-	
+
 	@UpnpStateVariable(defaultValue = "0")
 	private boolean status = false;
 

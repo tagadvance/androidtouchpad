@@ -5,16 +5,13 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.SocketException;
 
-public class UDPServer extends Thread {
+public class UDPServer implements Runnable {
 
 	public static final int DEFAULT_PORT = 20011;
 
 	private DatagramSocket socket;
-	PacketReceivedListener listener;
+	private PacketReceivedListener listener;
 
-	private Thread thread;
-	private boolean running;
-	
 	public UDPServer() throws SocketException {
 		this(DEFAULT_PORT);
 	}
@@ -29,39 +26,33 @@ public class UDPServer extends Thread {
 		this.socket = new DatagramSocket(port);
 	}
 
-	public void start() {
-		if (thread != null)
-			throw new IllegalStateException("server already started");
-		this.thread = new Thread(this);
-		thread.setDaemon(false);
-		thread.start();
-	}
-
 	@Override
 	public void run() {
-		while (!running) {
+		while (isRunning()) {
 			byte[] data = new byte[1024];
 			DatagramPacket packet = new DatagramPacket(data, data.length);
 			try {
 				socket.receive(packet);
-				if (listener != null)
-					listener.packetReceived(packet);
 			} catch (IOException e) {
-				caughtIOException(e);
+				exceptionOccurred(e);
 			}
+			if (listener != null)
+				listener.packetReceived(packet);
 		}
 	}
 
 	public boolean isRunning() {
-		return running;
+		return true;
 	}
 
-	public void exit() {
-		this.running = true;
-	}
-
-	protected void caughtIOException(IOException e) {
+	/**
+	 * 
+	 * @param e
+	 * @return <code>true</code> to <code>break</code>
+	 */
+	protected boolean exceptionOccurred(IOException e) {
 		e.printStackTrace();
+		return true;
 	}
 
 	public void setPacketReceivedListener(PacketReceivedListener l) {

@@ -1,94 +1,90 @@
 package com.tag.upnp;
 
 import java.awt.AWTException;
+import java.awt.Image;
+import java.awt.MenuItem;
 import java.awt.MouseInfo;
 import java.awt.Point;
+import java.awt.PopupMenu;
 import java.awt.Robot;
+import java.awt.SystemTray;
+import java.awt.TrayIcon;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.DatagramPacket;
-import java.net.SocketException;
 import java.net.URL;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
-import org.teleal.cling.UpnpService;
-import org.teleal.cling.UpnpServiceImpl;
-import org.teleal.cling.binding.LocalServiceBinder;
+import javax.imageio.ImageIO;
+
 import org.teleal.cling.binding.LocalServiceBindingException;
-import org.teleal.cling.binding.annotations.AnnotationLocalServiceBinder;
-import org.teleal.cling.model.DefaultServiceManager;
-import org.teleal.cling.model.ServiceManager;
 import org.teleal.cling.model.ValidationException;
-import org.teleal.cling.model.meta.DeviceDetails;
-import org.teleal.cling.model.meta.DeviceIdentity;
-import org.teleal.cling.model.meta.Icon;
-import org.teleal.cling.model.meta.LocalDevice;
-import org.teleal.cling.model.meta.LocalService;
-import org.teleal.cling.model.meta.ManufacturerDetails;
-import org.teleal.cling.model.meta.ModelDetails;
-import org.teleal.cling.model.types.DeviceType;
-import org.teleal.cling.model.types.UDADeviceType;
-import org.teleal.cling.model.types.UDN;
-import org.teleal.cling.registry.Registry;
+import org.teleal.cling.registry.RegistrationException;
 
 import com.tag.network.UDPServer;
 import com.tag.network.UDPServer.PacketReceivedListener;
+import com.tag.network.UpnpServiceBroadcast;
 
 public class TouchpadServer implements PacketReceivedListener {
 
-	public static final int VERSION = 1;
+	private static final Logger log = Logger.getLogger(TouchpadServer.class
+			.getName());
 
 	public static final int STRING_EVENT = 1;
 
-	private UDPServer server;
 	private Robot robot;
+	private KeyStroke keyStroke;
+	private UDPServer server;
+	private TrayIcon trayIcon;
 
-	public TouchpadServer() {
-		try {
-			server = new UDPServer(UDPServer.DEFAULT_PORT);
-			server.setPacketReceivedListener(this);
-			server.start();
-		} catch (SocketException e) {
-			e.printStackTrace();
-		}
+	public TouchpadServer() throws AWTException, IOException {
+		this.robot = new Robot();
+		this.keyStroke = new KeyStroke(robot);
 
-		try {
-			this.robot = new Robot();
-		} catch (AWTException e) {
-			e.printStackTrace();
-		}
+		server = new UDPServer(UDPServer.DEFAULT_PORT) {
 
-		Thread serverThread = new Thread(new Runnable() {
+			@Override
+			protected boolean exceptionOccurred(IOException e) {
+				log.log(Level.SEVERE, e.getMessage(), e);
+				return false;
+			}
+
+		};
+		server.setPacketReceivedListener(this);
+		Thread thread = new Thread(server);
+		thread.setDaemon(true);
+		thread.start();
+
+		thread = new Thread(new Runnable() {
 
 			@Override
 			public void run() {
 				try {
-					final UpnpService upnpService = new UpnpServiceImpl();
-					Runtime.getRuntime().addShutdownHook(
-							new Thread(new Runnable() {
-
-								@Override
-								public void run() {
-									upnpService.shutdown();
-								}
-
-							}));
-
-					// Add the bound local device to the registry
-					Registry registry = upnpService.getRegistry();
-					registry.addDevice(createDevice());
-				} catch (Exception ex) {
-					ex.printStackTrace();
-					System.exit(1);
+					new UpnpServiceBroadcast();
+				} catch (RegistrationException e) {
+					log.log(Level.WARNING, e.getMessage(), e);
+				} catch (LocalServiceBindingException e) {
+					log.log(Level.WARNING, e.getMessage(), e);
+				} catch (ValidationException e) {
+					log.log(Level.WARNING, e.getMessage(), e);
+				} catch (IOException e) {
+					log.log(Level.SEVERE, e.getMessage(), e);
 				}
 			}
 
 		});
-		serverThread.setDaemon(false);
-		serverThread.start();
+		thread.setDaemon(true);
+		thread.start();
+
+		createTrayIcon();
 	}
 
 	@Override
@@ -116,12 +112,10 @@ public class TouchpadServer implements PacketReceivedListener {
 					handleStringEvent(in);
 					break;
 				default:
-					System.err.println("default? " + key);
+					log.log(Level.WARNING, "default", key);
 			}
-		} catch (IOException e) {
-			e.printStackTrace();
-		} catch (RuntimeException e) {
-			e.printStackTrace();
+		} catch (Exception e) {
+			log.log(Level.WARNING, e.getMessage(), e);
 		}
 	}
 
@@ -134,20 +128,7 @@ public class TouchpadServer implements PacketReceivedListener {
 		boolean isCtrlDown = (mod & KeyEvent.CTRL_DOWN_MASK) == KeyEvent.CTRL_DOWN_MASK;
 		boolean isAltDown = (mod & KeyEvent.ALT_DOWN_MASK) == KeyEvent.ALT_DOWN_MASK;
 
-		int mask;
-		switch (button) {
-			case MouseEvent.BUTTON1:
-				mask = InputEvent.BUTTON1_MASK;
-				break;
-			case MouseEvent.BUTTON2:
-				mask = InputEvent.BUTTON2_MASK;
-				break;
-			case MouseEvent.BUTTON3:
-				mask = InputEvent.BUTTON3_MASK;
-				break;
-			default:
-				return;
-		}
+		int mask = getButtonMask(button);
 
 		if (isPressed) {
 			if (isShiftDown)
@@ -168,6 +149,18 @@ public class TouchpadServer implements PacketReceivedListener {
 		}
 	}
 
+	private static int getButtonMask(int button) {
+		switch (button) {
+			case MouseEvent.BUTTON1:
+				return InputEvent.BUTTON1_MASK;
+			case MouseEvent.BUTTON2:
+				return InputEvent.BUTTON2_MASK;
+			case MouseEvent.BUTTON3:
+				return InputEvent.BUTTON3_MASK;
+		}
+		throw new IllegalArgumentException("invalid button " + button);
+	}
+
 	private void handleMouseMotionEvent(DataInputStream in) throws IOException {
 		int x = in.readShort(), y = in.readShort();
 		Point p = MouseInfo.getPointerInfo().getLocation();
@@ -184,7 +177,7 @@ public class TouchpadServer implements PacketReceivedListener {
 	private void handleStringEvent(DataInputStream in) throws IOException {
 		String keys = in.readUTF();
 		if (keys != null)
-			KeyStroke.typeString(robot, keys);
+			keyStroke.typeString(keys);
 	}
 
 	private void handleKeyEvent(int event, DataInputStream in)
@@ -200,53 +193,44 @@ public class TouchpadServer implements PacketReceivedListener {
 		}
 	}
 
-	@SuppressWarnings("unchecked")
-	private LocalDevice createDevice() throws ValidationException,
-			LocalServiceBindingException, IOException {
-		UDN udn = UDN.uniqueSystemIdentifier("TouchpadService");
-		DeviceIdentity identity = new DeviceIdentity(udn);
+	private void createTrayIcon() throws IOException, AWTException {
+		if (!SystemTray.isSupported()) {
+			log.log(Level.WARNING, "system tray is not supported");
+			return;
+		}
 
-		DeviceType type = new UDADeviceType("TouchpadService", VERSION);
+		final SystemTray tray = SystemTray.getSystemTray();
+		URL url = getClass().getResource("touchpad16.png");
+		Image image = ImageIO.read(url);
 
-		DeviceDetails deviceDetails = createDeviceDetails();
+		PopupMenu popup = new PopupMenu();
+		MenuItem exitItem = new MenuItem("Exit");
+		popup.add(exitItem);
 
-		Icon icon = createIcon();
+		trayIcon = new TrayIcon(image, "Touchpad", popup);
+		trayIcon.setImageAutoSize(true);
+		trayIcon.addMouseListener(new MouseAdapter() {
+		});
+		tray.add(trayIcon);
 
-		LocalServiceBinder binder = new AnnotationLocalServiceBinder();
-		LocalService<TouchpadService> touchpadService = binder
-				.read(TouchpadService.class);
+		exitItem.addActionListener(new ActionListener() {
 
-		ServiceManager<TouchpadService> serviceManager = new DefaultServiceManager<TouchpadService>(
-				touchpadService, TouchpadService.class);
-		touchpadService.setManager(serviceManager);
+			public void actionPerformed(ActionEvent e) {
+				tray.remove(trayIcon);
+				System.exit(0);
+			}
 
-		return new LocalDevice(identity, type, deviceDetails, icon,
-				touchpadService);
+		});
+
+		log.log(Level.INFO, "tray icon added to system tray");
 	}
 
-	private DeviceDetails createDeviceDetails() {
-		String manufacturer = "Tag";
-		ManufacturerDetails manufacturerDetails = new ManufacturerDetails(
-				manufacturer);
-		String modelName = "TouchpadService";
-		String modelDescription = "touchpad locator service";
-		String modelNumber = "v1";
-		ModelDetails modelDetails = new ModelDetails(modelName,
-				modelDescription, modelNumber);
-		String friendlyName = "TouchpadService Locator Service";
-		return new DeviceDetails(friendlyName, manufacturerDetails,
-				modelDetails);
-	}
-
-	private Icon createIcon() throws IOException {
-		String mimeType = "image/png";
-		int width = 48, height = 48, depth = 8;
-		URL url = getClass().getResource("touchpad.png");
-		return new Icon(mimeType, width, height, depth, url);
-	}
-
-	public static void main(String[] args) throws Exception {
-		new TouchpadServer();
+	public static void main(String[] args) {
+		try {
+			new TouchpadServer();
+		} catch (Exception e) {
+			log.log(Level.SEVERE, e.getMessage(), e);
+		}
 	}
 
 }
